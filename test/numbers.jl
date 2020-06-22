@@ -2690,3 +2690,11 @@ end
         end
     end
 end
+
+@testset "generic isfinite" begin
+    @test isfinite('a') == true
+
+    @test invoke(isfinite, Tuple{Any}, 0.0) == true
+    @test invoke(isfinite, Tuple{Any}, NaN) == false
+    @test invoke(isfinite, Tuple{Any}, Inf) == false
+end
