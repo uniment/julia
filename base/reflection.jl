@@ -1254,6 +1254,51 @@ function hasmethod(@nospecialize(f), @nospecialize(t), kwnames::Tuple{Vararg{Sym
 end
 
 """
+    fbody = bodyfunction(mnokw::Method)
+
+Find the keyword "body function" (the function that contains the body of the method
+as written, called after all missing keyword-arguments have been assigned default values).
+`mnokw` is the method that gets called when you invoke it without supplying any keywords.
+"""
+function bodyfunction(mnokw::Method)
+    function getsym(arg)
+        isa(arg, Symbol) && return arg
+        isa(arg, GlobalRef) && return arg.name
+        return nothing
+    end
+
+    fmod = mnokw.module
+    # The lowered code for `mnokw` should look like
+    #   %1 = mkw(kwvalues..., #self#, args...)
+    #        return %1
+    # where `mkw` is the name of the "active" keyword body-function.
+    ast = Base.uncompressed_ast(mnokw)
+    f = nothing
+    if isa(ast, Core.CodeInfo) && length(ast.code) >= 2
+        callexpr = ast.code[end-1]
+        if isa(callexpr, Expr) && callexpr.head == :call
+            fsym = callexpr.args[1]
+            if isa(fsym, Symbol)
+                f = getfield(fmod, fsym)
+            elseif isa(fsym, GlobalRef)
+                newsym = nothing
+                if fsym.mod === Core && fsym.name === :_apply
+                    newsym = getsym(callexpr.args[2])
+                elseif fsym.mod === Core && fsym.name === :_apply_iterate
+                    newsym = getsym(callexpr.args[3])
+                end
+                if isa(newsym, Symbol)
+                    f = getfield(mnokw.module, newsym)::Function
+                else
+                    f = getfield(fsym.mod, fsym.name)::Function
+                end
+            end
+        end
+    end
+    return f
+end
+
+"""
     Base.isambiguous(m1, m2; ambiguous_bottom=false) -> Bool
 
 Determine whether two methods `m1` and `m2` (typically of the same
