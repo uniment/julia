@@ -155,7 +155,7 @@ struct TOMLCache
     p::TOML.Parser
     d::Dict{String, Dict{String, Any}}
 end
-TOMLCache() = TOMLCache(TOML.Parser(), Dict())
+TOMLCache() = TOMLCache(TOML.Parser(), Dict{String, Dict{String, Any}}())
 
 function parsed_toml(cache::TOMLCache, project_file::String)
     get!(cache.d, project_file) do
@@ -437,17 +437,14 @@ function explicit_manifest_deps_get(project_file::String, where::UUID, name::Str
     end
     found_where || return nothing
     found_name || return PkgId(name)
-    # Only here is deps was not a dict which mean we have a unique name for the dep
+    # Only reach here if deps was not a dict which mean we have a unique name for the dep
     if !haskey(d, name) || length(d[name]) != 1
         error("expected a single entry for $(repr(name)) in $(repr(project_file))")
     end
     entry = first(d[name])
-    if found_name
-        uuid = get(entry, "uuid", nothing)
-        return PkgId(UUID(uuid), name)
-    else
-        return PkgId(name)
-    end
+    uuid = get(entry, "uuid", nothing)
+    uuid === nothing && return nothing
+    return PkgId(UUID(uuid), name)
 end
 
 # find `uuid` stanza, return the corresponding path
@@ -459,7 +456,9 @@ function explicit_manifest_uuid_path(project_file::String, pkg::PkgId, cache::TO
     entries = get(d, pkg.name, nothing)
     entries === nothing && return nothing # TODO: allow name to mismatch?
     for entry in entries
-        if UUID(get(entry, "uuid", nothing)) === pkg.uuid
+        uuid = get(entry, "uuid", nothing)
+        uuid === nothing && continue
+        if UUID(uuid) === pkg.uuid
             path = get(entry, "path", nothing)
             if path !== nothing
                 path = normpath(abspath(dirname(manifest_file), path))
@@ -467,10 +466,13 @@ function explicit_manifest_uuid_path(project_file::String, pkg::PkgId, cache::TO
             end
             hash = get(entry, "git-tree-sha1", nothing)
             hash === nothing && return nothing
-            slug = version_slug(pkg.uuid, SHA1(hash))
-            for depot in DEPOT_PATH
-                path = abspath(depot, "packages", pkg.name, slug)
-                ispath(path) && return path
+            hash = SHA1(hash)
+            # Keep the 4 since it used to be the default
+            for slug in (version_slug(pkg.uuid, hash, 4), version_slug(pkg.uuid, hash))
+                for depot in DEPOT_PATH
+                    path = abspath(depot, "packages", pkg.name, slug)
+                    ispath(path) && return path
+                end
             end
         end
     end
