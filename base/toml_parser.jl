@@ -1,33 +1,25 @@
 using Base: IdSet
 
-if !@isdefined HAVE_DATES
-    error("need to set the variable `HAVE_DATES` to determine if the Dates stdlib is available")
+# In case we do not have the Dates stdlib available
+# we parse DateTime into these internal structs,
+# note that these do not do any argument checking
+struct Date
+    year::Int
+    month::Int
+    day::Int
 end
-
-if HAVE_DATES
-    using Dates
-else
-    # In case we do not have the Dates stdlib available
-    # we parse DateTime into these internal structs,
-    # note that these do not do any argument checking
-    struct Date
-        year::Int
-        month::Int
-        day::Int
-    end
-    struct Time
-        hour::Int
-        minute::Int
-        second::Int
-        ms::Int
-    end
-    struct DateTime
-        date::Date
-        time::Time
-    end
-    DateTime(y, m, d, h, mi, s, ms) =
-        DateTime(Date(y,m,d), Time(h, mi, s, ms))
+struct Time
+    hour::Int
+    minute::Int
+    second::Int
+    ms::Int
 end
+struct DateTime
+    date::Date
+    time::Time
+end
+DateTime(y, m, d, h, mi, s, ms) =
+    DateTime(Date(y,m,d), Time(h, mi, s, ms))
 
 const EOF_CHAR = typemax(Char)
 
@@ -77,7 +69,7 @@ mutable struct Parser
     # [a.b.c.d] doesn't "define" the table [a]
     # so keys can later be added to [a], therefore
     # we need to keep track of what tables are
-    # actualyl "defined
+    # actually defined
     defined_tables::IdSet{TOMLDict}
 
     # The table we will finally return to the user
@@ -85,11 +77,14 @@ mutable struct Parser
 
     # Filled in in case we are parsing a file to improve error messages
     filepath::Union{String, Nothing}
+
+    # Get's populated with the Dates stdlib if it exists
+    Dates::Union{Module, Nothing}
 end
 
+const DATES_PKGID = Base.PkgId(Base.UUID("ade2ca70-3891-5945-98fb-dc099432e06a"), "Dates")
 function Parser(str::String; filepath=nothing)
     root = TOMLDict()
-    # Can haz name initialization?
     l = Parser(
             str,                  # str
             EOF_CHAR,             # current_char
@@ -106,7 +101,8 @@ function Parser(str::String; filepath=nothing)
             IdSet{TOMLDict}(),    # defined_tables
             root,
             filepath,
-           )
+            get(Base.loaded_modules, DATES_PKGID, nothing),
+        )
     startup(l)
     return l
 end
@@ -153,12 +149,12 @@ throw_internal_error(msg) = error("internal TOML parser error: $msg")
 # all the way and have this error be returned to the user
 # if the parse is called with `raise=false`. This macro
 # makes that easier
-@eval macro $(Symbol("try"))(expr)
-    :(
-        v = $(esc(expr));
-        v isa $ParserError && return v;
-        v;
-    )
+@eval macro $(:var"try")(expr)
+    return quote
+        v = $(esc(expr))
+        v isa ParserError && return v
+        v
+    end
 end
 
 # TODO: Check all of these are used
@@ -199,8 +195,6 @@ end
     ErrUnderscoreNotSurroundedByDigits
     ErrLeadingZeroNotAllowedInteger
     ErrOverflowError
-    ErrIntegerParsingError
-    ErrFloatParsingError
     ErrLeadingDot
     ErrNoTrailingDigitAfterDot
     ErrTrailingUnderscoreNumber
@@ -214,9 +208,7 @@ end
     ErrUnexpectedEndString
     ErrInvalidEscapeCharacter
     ErrInvalidUnicodeScalar
-
 end
-
 
 const err_message = Dict(
     ErrTrailingCommaInlineTable             => "trailing comma not allowed in inline table",
@@ -246,7 +238,13 @@ const err_message = Dict(
     ErrExpectedEqualAfterKey                => "expected equal sign after key",
     ErrNoTrailingDigitAfterDot              => "expected digit after dot",
     ErrOverflowError                        => "overflowed when parsing integer",
+    ErrInvalidUnicodeScalar                 => "invalid uncidode scalar",
+    ErrInvalidEscapeCharacter               => "invalid escape character",
 )
+
+for err in instances(ErrorType)
+    @assert haskey(err_message, err) "$err does not have an error message"
+end
 
 mutable struct ParserError <: Exception
     type::ErrorType
@@ -467,7 +465,7 @@ end
 function recurse_dict!(l::Parser, d::Dict, dotted_keys::AbstractVector{String}, check=true)::Err{TOMLDict}
     for i in 1:length(dotted_keys)
         key = dotted_keys[i]
-        d = get!(() -> TOMLDict(), d, key)
+        d = get!(TOMLDict, d, key)
         if d isa TOMLArray
             d = d[end]
         end
@@ -699,7 +697,7 @@ end
 
 isvalid_hex(c::Char) = isdigit(c) || ('a' <= c <= 'f') || ('A' <= c <= 'F')
 isvalid_oct(c::Char) = '0' <= c <= '7'
-isvalid_binary(c::Char) = '0' <= c <= '2'
+isvalid_binary(c::Char) = '0' <= c <= '1'
 
 const ValidSigs = Union{typeof.([isvalid_hex, isvalid_oct, isvalid_binary, isdigit])...}
 # This function eats things accepted by `f` but also allows eating `_` in between
@@ -735,7 +733,7 @@ function accept_batch_underscore(l::Parser, f::ValidSigs, fail_if_underscore=tru
     end
 end
 
-function parse_number_or_date_start(l::Parser)::Err{Union{Int, Float64, Date, Time, DateTime}}
+function parse_number_or_date_start(l::Parser)
     integer = true
     read_dot = false
 
@@ -759,7 +757,7 @@ function parse_number_or_date_start(l::Parser)::Err{Union{Int, Float64, Date, Ti
     # Zero is allowed to follow by a end value char, a base x, o, b or a dot
     readed_zero = false
     if accept(l, '0')
-        readed_zero = true # Intentional bad grammer to remove the ambiguity in "read"...
+        readed_zero = true # Intentional bad grammar to remove the ambiguity in "read"...
         if ok_end_value(peek(l))
             return 0
         elseif accept(l, 'x')
@@ -815,7 +813,6 @@ function parse_number_or_date_start(l::Parser)::Err{Union{Int, Float64, Date, Ti
         contains_underscore |= read_underscore
     end
     if !ok_end_value(peek(l))
-        error()
         return ParserError(ErrLeadingZeroNotAllowedInteger)
     end
     return parse_float(l, read_underscore)
@@ -826,7 +823,6 @@ function take_string_or_substring(l, contains_underscore)::Union{String, SubStri
     subs = take_substring(l)
     # Need to pass a AbstractString to `parse` so materialize it in case it
     # contains underscore.
-    #                                   vvvvvvv <- this looksl like a dude flipping the bird
     return contains_underscore ? filter(!=('_'), subs) : subs
 end
 
@@ -845,6 +841,7 @@ function parse_int(l::Parser, contains_underscore, base=nothing)::Err{Int}
         e isa Base.OverflowError && return(ParserError(ErrOverflowError))
         error("internal parser error: did not correctly discredit $(repr(s)) as an int")
     end
+    return v
 end
 
 
@@ -881,9 +878,9 @@ ok_end_value(c::Char) = iswhitespace(c) || c == '#' || c == EOF_CHAR || c == ']'
 =#
 
 accept_two(l, f::F) where {F} = accept_n(l, 2, f) || return(ParserError(ErrParsingDateTime))
-function parse_datetime(l)::Err{Union{DateTime, Date}}
+function parse_datetime(l)
     # Year has already been eaten when we reach here
-    year = parse_int(l, false)
+    year = parse_int(l, false)::Int
     year in 0:9999 || return ParserError(ErrParsingDateTime)
 
     # Month
@@ -906,10 +903,10 @@ function parse_datetime(l)::Err{Union{DateTime, Date}}
     if ok_end_value(peek(l))
         if (read_space = accept(l, ' '))
             if !isdigit(peek(l))
-                return Date(year, month, day)
+                return try_return_date(l, year, month, day)
             end
         else
-            return Date(year, month, day)
+            return try_return_date(l, year, month, day)
         end
     end
     if !read_space
@@ -930,21 +927,52 @@ function parse_datetime(l)::Err{Union{DateTime, Date}}
     end
 
     # The DateTime parser verifies things like leap year for us
-    try
-        DateTime(year, month, day,
-                 h, m, s, ms)
-    catch e
-         ParserError(ErrParsingDateTime)
+    return try_return_datetime(l, year, month, day, h, m, s, ms)
+end
+
+function try_return_datetime(p, year, month, day, h, m, s, ms)
+    if p.Dates !== nothing
+        try
+            return p.Dates.DateTime(year, month, day, h, m, s, ms)
+        catch
+            return ParserError(ErrParsingDateTime)
+        end
+    else
+        return DateTime(year, month, day, h, m, s, ms)
     end
 end
 
-function parse_local_time(l::Parser)::Err{Time}
+function try_return_date(p, year, month, day)
+    if p.Dates !== nothing
+        try
+            return p.Dates.Date(year, month, day)
+        catch
+            return ParserError(ErrParsingDateTime)
+        end
+    else
+        return Date(year, month, day)
+    end
+end
+
+function parse_local_time(l::Parser)
     h = parse_int(l, false)
     h in 0:23 || return ParserError(ErrParsingDateTime)
     _, m, s, ms = @try _parse_local_time(l, true)
     # TODO: Could potentially parse greater accuracy for the
     # fractional seconds here.
-    return Time(h, m, s, ms)
+    return try_return_time(l, h, m, s, ms)
+end
+
+function try_return_time(p, h, m, s, ms)
+    if p.Dates !== nothing
+        try
+            return p.Dates.Time(h, m, s, ms)
+        catch
+            return ParserError(ErrParsingDateTime)
+        end
+    else
+        return Time(h, m, s, ms)
+    end
 end
 
 function _parse_local_time(l::Parser, skip_hour=false)::Err{NTuple{4, Int}}
@@ -1001,7 +1029,7 @@ end
 ##########
 
 function parse_string_start(l::Parser, quoted::Bool)::Err{String}
-    # Have eaten a `'` if `quoted is true, otherwise have eaten a `"`
+    # Have eaten a `'` if `quoted` is true, otherwise have eaten a `"`
     multiline = false
     c = quoted ? '\'' : '"'
     if accept(l, c) # Eat second quote
@@ -1039,13 +1067,12 @@ function parse_string_continue(l::Parser, multiline::Bool, quoted::Bool)::Err{St
         end
         next_slash = peek(l) == '\\'
         if !next_slash
-            # TODO: This is not true, could be """"foo""""
+            # TODO: Doesn't handle values with e.g. format `""""str""""`
             if accept(l, q) && (!multiline || (accept(l, q) && accept(l, q)))
                 push!(l.chunks, start_chunk:(l.prevpos-offset-1))
                 return take_chunks(l, contains_backslash)
             end
         end
-        # This shouldn't be needed?
         c = eat_char(l) # eat the character we stopped at
         next_slash = c == '\\'
         if next_slash && !quoted

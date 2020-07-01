@@ -338,13 +338,12 @@ include("initdefs.jl")
 # worker threads
 include("threadcall.jl")
 
-module TOML
-const HAVE_DATES = false
-include("toml_parser.jl")
-end # module
-
 # code loading
 include("uuid.jl")
+include("pkgid.jl")
+module TOML
+    include("toml_parser.jl")
+end
 include("loading.jl")
 
 # misc useful functions & macros
