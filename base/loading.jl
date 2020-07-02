@@ -327,21 +327,22 @@ end
 function project_file_name_uuid(project_file::String, name::String, cache::TOMLCache)::PkgId
     uuid = dummy_uuid(project_file)
     d = parsed_toml(cache, project_file)
-    uuid = get(d, "uuid", uuid)
-    name = get(d, "name", name)
-    return PkgId(UUID(uuid), name)
+    uuid′ = get(d, "uuid", nothing)::Union{String, Nothing}
+    uuid′ === nothing || (uuid = UUID(uuid′))
+    name = get(d, "name", name)::String
+    return PkgId(uuid, name)
 end
 
 function project_file_path(project_file::String, name::String, cache)
     d = parsed_toml(cache, project_file)
-    joinpath(dirname(project_file), get(d, "path", ""))
+    joinpath(dirname(project_file), get(d, "path", "")::String)
 end
 
 # find project file's corresponding manifest file
 function project_file_manifest_path(project_file::String, cache::TOMLCache)::Union{Nothing,String}
     dir = abspath(dirname(project_file))
     d = parsed_toml(cache, project_file)
-    explicit_manifest = get(d, "manifest", nothing)
+    explicit_manifest = get(d, "manifest", nothing)::Union{String, Nothing}
     if explicit_manifest !== nothing
         manifest_file = normpath(joinpath(dir, explicit_manifest))
         isfile_casesensitive(manifest_file) && return manifest_file
@@ -393,14 +394,15 @@ end
 # find project file root or deps `name => uuid` mapping
 # return `nothing` if `name` is not found
 function explicit_project_deps_get(project_file::String, name::String, cache::TOMLCache)::Union{Nothing,UUID}
-    root_name = nothing
-    root_uuid = dummy_uuid(project_file)
     d = parsed_toml(cache, project_file)
-    if get(d, "name", nothing) == name
-        return UUID(get(d, "uuid", root_uuid))
-    elseif haskey(d, "deps")
-        deps = d["deps"]
-        uuid = get(deps, name, nothing)
+    root_uuid = dummy_uuid(project_file)
+    if get(d, "name", nothing)::Union{String, Nothing} === name
+        uuid = get(d, "uuid", nothing)::Union{String, Nothing}
+        return uuid === nothing ? root_uuid : UUID(uuid)
+    end
+    deps = get(d, "deps", nothing)::Union{Dict{String, Any}, Nothing}
+    if deps !== nothing
+        uuid = get(deps, name, nothing)::Union{String, Nothing}
         uuid === nothing || return UUID(uuid)
     end
     return nothing
@@ -416,17 +418,19 @@ function explicit_manifest_deps_get(project_file::String, where::UUID, name::Str
     found_name = false
     for (dep_name, entries) in d
         for entry in entries
-            haskey(entry, "uuid") || continue
-            if UUID(entry["uuid"]) == where
+            uuid = get(entry, "uuid", nothing)::Union{String, Nothing}
+            uuid === nothing && continue
+            if UUID(uuid) === where
                 found_where = true
                 # deps is either a list of names (deps = ["DepA", "DepB"]) or
                 # a table of entries (deps = {"DepA" = "6ea...", "DepB" = "55d..."}
-                deps = get(entry, "deps", nothing)
-                if deps isa Vector
+                deps = get(entry, "deps", nothing)::Union{Vector{Any}, Dict{String, Any}, Nothing}
+                deps === nothing && continue
+                if deps isa Vector{Any}
                     found_name = name in deps
                     break
-                elseif deps isa Dict
-                    for (dep, uuid) in deps
+                elseif deps isa Dict{String, Any}
+                    for (dep, uuid::String) in deps
                         if dep === name
                             return PkgId(UUID(uuid), name)
                         end
@@ -438,11 +442,12 @@ function explicit_manifest_deps_get(project_file::String, where::UUID, name::Str
     found_where || return nothing
     found_name || return PkgId(name)
     # Only reach here if deps was not a dict which mean we have a unique name for the dep
-    if !haskey(d, name) || length(d[name]) != 1
+    name_deps = get(d, name, nothing)::Union{Nothing, Vector{Any}}
+    if name_deps === nothing || length(name_deps) != 1
         error("expected a single entry for $(repr(name)) in $(repr(project_file))")
     end
-    entry = first(d[name])
-    uuid = get(entry, "uuid", nothing)
+    entry = first(name_deps)::Dict{String, Any}
+    uuid = get(entry, "uuid", nothing)::Union{String, Nothing}
     uuid === nothing && return nothing
     return PkgId(UUID(uuid), name)
 end
@@ -453,18 +458,18 @@ function explicit_manifest_uuid_path(project_file::String, pkg::PkgId, cache::TO
     manifest_file === nothing && return nothing # no manifest, skip env
 
     d = parsed_toml(cache, manifest_file)
-    entries = get(d, pkg.name, nothing)
+    entries = get(d, pkg.name, nothing)::Union{Nothing, Vector{Any}}
     entries === nothing && return nothing # TODO: allow name to mismatch?
     for entry in entries
-        uuid = get(entry, "uuid", nothing)
+        uuid = get(entry, "uuid", nothing)::Union{Nothing, String}
         uuid === nothing && continue
         if UUID(uuid) === pkg.uuid
-            path = get(entry, "path", nothing)
+            path = get(entry, "path", nothing)::Union{Nothing, String}
             if path !== nothing
                 path = normpath(abspath(dirname(manifest_file), path))
                 return path
             end
-            hash = get(entry, "git-tree-sha1", nothing)
+            hash = get(entry, "git-tree-sha1", nothing)::Union{Nothing, String}
             hash === nothing && return nothing
             hash = SHA1(hash)
             # Keep the 4 since it used to be the default
