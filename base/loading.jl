@@ -416,8 +416,8 @@ function explicit_manifest_deps_get(project_file::String, where::UUID, name::Str
     d = parsed_toml(cache, manifest_file)
     found_where = false
     found_name = false
-    for (dep_name, entries) in d
-        for entry in entries
+    for (dep_name, entries::Vector{Any}) in d
+        for entry::Dict{String, Any} in entries
             uuid = get(entry, "uuid", nothing)::Union{String, Nothing}
             uuid === nothing && continue
             if UUID(uuid) === where
@@ -446,7 +446,7 @@ function explicit_manifest_deps_get(project_file::String, where::UUID, name::Str
     if name_deps === nothing || length(name_deps) != 1
         error("expected a single entry for $(repr(name)) in $(repr(project_file))")
     end
-    entry = first(name_deps)::Dict{String, Any}
+    entry = first(name_deps::Vector{Any})::Dict{String, Any}
     uuid = get(entry, "uuid", nothing)::Union{String, Nothing}
     uuid === nothing && return nothing
     return PkgId(UUID(uuid), name)
@@ -460,7 +460,7 @@ function explicit_manifest_uuid_path(project_file::String, pkg::PkgId, cache::TO
     d = parsed_toml(cache, manifest_file)
     entries = get(d, pkg.name, nothing)::Union{Nothing, Vector{Any}}
     entries === nothing && return nothing # TODO: allow name to mismatch?
-    for entry in entries
+    for entry::Dict{String, Any} in entries
         uuid = get(entry, "uuid", nothing)::Union{Nothing, String}
         uuid === nothing && continue
         if UUID(uuid) === pkg.uuid
