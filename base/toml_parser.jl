@@ -509,7 +509,7 @@ function parse_array_table(l)::Union{Nothing, ParserError}
     d = @try recurse_dict!(l, l.root, @view(table_key[1:end-1]), false)
     k = table_key[end]
     old = get!(() -> [], d, k)
-    if old isa Vector
+    if old isa Vector{Any}
         if old in l.static_arrays
             return ParserError(ErrAddArrayToStaticArray)
         end
