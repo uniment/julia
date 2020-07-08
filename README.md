@@ -125,7 +125,7 @@ The Julia source code is organized as follows:
     doc/build      detailed notes for building Julia
     src/           source for Julia language core
     test/          test suites
-    ui/            source for various front ends
+    cli/           source for the command line interface/REPL
     usr/           binaries and shared libraries loaded by Julia's standard libraries
 
 ## Terminal, Editors and IDEs

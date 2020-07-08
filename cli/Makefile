@@ -5,44 +5,47 @@ include $(JULIAHOME)/deps/Versions.make
 include $(JULIAHOME)/Make.inc
 include $(JULIAHOME)/deps/llvm-ver.make
 
-override CFLAGS += $(JCFLAGS)
-override CXXFLAGS += $(JCXXFLAGS)
-override CPPFLAGS += $(JCPPFLAGS)
-
-SRCS := repl
 
 HEADERS := $(addprefix $(JULIAHOME)/src/,julia.h julia_assert.h julia_threads.h julia_internal.h options.h) \
 	$(BUILDDIR)/../src/julia_version.h $(wildcard $(JULIAHOME)/src/support/*.h) $(LIBUV_INC)/uv.h
 
-FLAGS := -I$(BUILDROOT)/src -I$(JULIAHOME)/src -I$(JULIAHOME)/src/support -I$(build_includedir)
-ifneq ($(USEMSVC), 1)
-FLAGS += -Wall -Wno-strict-aliasing -fno-omit-frame-pointer -Wc++-compat
-endif
-
-OBJS := $(SRCS:%=$(BUILDDIR)/%.o)
-DOBJS := $(SRCS:%=$(BUILDDIR)/%.dbg.obj)
-DEBUGFLAGS += $(FLAGS)
-SHIPFLAGS += $(FLAGS)
-JLDFLAGS += $(LDFLAGS) $(NO_WHOLE_ARCHIVE) $(OSLIBS) $(RPATH)
-
-ifeq ($(USE_SYSTEM_LIBM),0)
-ifneq ($(UNTRUSTED_SYSTEM_LIBM),0)
-JLDFLAGS += $(WHOLE_ARCHIVE) $(build_libdir)/libopenlibm.a $(NO_WHOLE_ARCHIVE)
-endif
-endif
+LOADER_CFLAGS := $(JCFLAGS) -I$(BUILDROOT)/src -I$(JULIAHOME)/src -I$(JULIAHOME)/src/support -I$(build_includedir)
+LOADER_LDFLAGS :=
 
 ifeq ($(OS),WINNT)
-JLDFLAGS += -municode
+LOADER_CFLAGS += -municode -mconsole -ffreestanding -nostdlib \
+                 -fno-stack-check -fno-stack-protector -mno-stack-arg-probe
 endif
+
+#LDFLAGS += -static
+ifeq ($(OS),WINNT)
+LOADER_LDFLAGS += -municode -mconsole -ffreestanding -nostdlib \
+	              --disable-auto-import --disable-runtime-pseudo-reloc \
+	              -lntdll -lkernel32 -lpsapi
+else ifeq ($(OS),Linux)
+LOADER_LDFLAGS += -ldl  -rdynamic
+else ifeq ($(OS),FreeBSD)
+LOADER_LDFLAGS += -ldl  -rdynamic
+endif
+
+# Build list of dependent libraries that must be opened
+SHIPFLAGS  += -DDEP_LIBS="\"$(LOADER_BUILD_DEP_LIBS)\""
+DEBUGFLAGS += -DDEP_LIBS="\"$(LOADER_DEBUG_BUILD_DEP_LIBS)\""
+
+SRCS := loader_exe loader_lib
+OBJS := $(SRCS:%=$(BUILDDIR)/%.o)
+DOBJS := $(SRCS:%=$(BUILDDIR)/%.dbg.obj)
+LIB_OBJS := $(BUILDDIR)/loader_lib.o
+LIB_DOBJS := $(BUILDDIR)/loader_lib.dbg.obj
 
 default: release
 all: release debug
 release debug :  % : julia-%
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c $(HEADERS)
-	@$(call PRINT_CC, $(CC) $(CPPFLAGS) $(CFLAGS) $(SHIPFLAGS) -c $< -o $@)
+	@$(call PRINT_CC, $(CC) $(SHIPFLAGS) $(LOADER_CFLAGS) -c $< -o $@)
 $(BUILDDIR)/%.dbg.obj: $(SRCDIR)/%.c $(HEADERS)
-	@$(call PRINT_CC, $(CC) $(CPPFLAGS) $(CFLAGS) $(DEBUGFLAGS) -c $< -o $@)
+	@$(call PRINT_CC, $(CC) $(DEBUGFLAGS) $(LOADER_CFLAGS) -c $< -o $@)
 
 ifeq ($(OS),WINNT)
 ifneq ($(USEMSVC), 1)
@@ -57,8 +60,8 @@ DOBJS += julia_res.o
 endif
 endif
 
-julia-release: $(build_bindir)/julia$(EXE)
-julia-debug: $(build_bindir)/julia-debug$(EXE)
+julia-release: $(build_bindir)/julia$(EXE) $(build_shlibdir)/libjulialoader.$(JL_MAJOR_MINOR_SHLIB_EXT)
+julia-debug: $(build_bindir)/julia-debug$(EXE) $(build_shlibdir)/libjulialoader-debug.$(JL_MAJOR_MINOR_SHLIB_EXT)
 
 # Embed an Info.plist in the julia executable
 # Create an intermediate target Info.plist for Darwin code signing.
@@ -82,10 +85,28 @@ else
 CXXLD := $(LD)
 endif
 
+$(build_shlibdir)/libjulialoader.$(JL_MAJOR_MINOR_SHLIB_EXT): $(LIB_OBJS)
+	@$(call PRINT_LINK, $(CXXLD) $(LOADER_CFLAGS) -shared $(SHIPFLAGS) $^ -o $@ $(LOADER_LDFLAGS) $(RPATH_LIB))
+ifneq ($(OS), WINNT)
+	@ln -sf $(notdir $@) $(build_shlibdir)/libjulialoader.$(JL_MAJOR_SHLIB_EXT)
+	@ln -sf $(notdir $@) $(build_shlibdir)/libjulialoader.$(SHLIB_EXT)
+endif
+
+
+$(build_shlibdir)/libjulialoader-debug.$(JL_MAJOR_MINOR_SHLIB_EXT): $(LIB_DOBJS)
+	@$(call PRINT_LINK, $(CXXLD) $(LOADER_CFLAGS) -shared $(DEBUGFLAGS) $^ -o $@ $(LOADER_LDFLAGS) $(RPATH_LIB))
+ifneq ($(OS), WINNT)
+	@ln -sf $(notdir $@) $(build_shlibdir)/libjulialoader-debug.$(JL_MAJOR_SHLIB_EXT)
+	@ln -sf $(notdir $@) $(build_shlibdir)/libjulialoader-debug.$(SHLIB_EXT)
+endif
+
+
 $(build_bindir)/julia$(EXE): $(OBJS)
-	@$(call PRINT_LINK, $(CXXLD) $(CXXFLAGS) $(CXXLDFLAGS) $(LINK_FLAGS) $(SHIPFLAGS) $(OBJS) -o $@ -L$(build_private_libdir) -L$(build_libdir) -L$(build_shlibdir) -ljulia $(JLDFLAGS) $(CXXLDFLAGS))
+	@$(call PRINT_LINK, $(CXXLD) $(LOADER_CFLAGS) $(SHIPFLAGS) $^ -o $@ $(LOADER_LDFLAGS) $(RPATH))
+
 $(build_bindir)/julia-debug$(EXE): $(DOBJS)
-	@$(call PRINT_LINK, $(CXXLD) $(CXXFLAGS) $(CXXLDFLAGS) $(LINK_FLAGS) $(DEBUGFLAGS) $(DOBJS) -o $@ -L$(build_private_libdir) -L$(build_libdir) -L$(build_shlibdir) -ljulia-debug $(JLDFLAGS) $(CXXLDFLAGS))
+	@$(call PRINT_LINK, $(CXXLD) $(LOADER_CFLAGS) $(DEBUGFLAGS) $^ -o $@ $(LOADER_LDFLAGS) $(RPATH))
+
 
 clean: | $(CLEAN_TARGETS)
 	rm -f *.o *.dbg.obj
