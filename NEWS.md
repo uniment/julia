@@ -73,6 +73,7 @@ Standard library changes
 * `first` and `last` functions now accept an integer as second argument to get that many
   leading or trailing elements of any iterable ([#34868]).
 * `intersect` on `CartesianIndices` now returns `CartesianIndices` instead of `Vector{<:CartesianIndex}` ([#36643]).
+* Logging (such as `@warn`) no longer catches exceptions in the logger itself ([#36600]).
 
 #### LinearAlgebra
 * New method `LinearAlgebra.issuccess(::CholeskyPivoted)` for checking whether pivoted Cholesky factorization was successful ([#36002]).
