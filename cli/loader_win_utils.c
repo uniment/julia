@@ -10,7 +10,7 @@ static FILE _stderr = { INVALID_HANDLE_VALUE };
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
 
-int fwrite(const WCHAR *str, size_t nchars, FILE *out) {
+int loader_fwrite(const WCHAR *str, size_t nchars, FILE *out) {
     DWORD written;
     if (out->isconsole) {
         if (WriteConsole(out->fd, str, nchars, &written, NULL))
@@ -22,7 +22,7 @@ int fwrite(const WCHAR *str, size_t nchars, FILE *out) {
     return -1;
 }
 
-int fputs(const char *str, FILE *out)
+int loader_fputs(const char *str, FILE *out)
 {
     wchar_t wstr[1024];
     utf8_to_wchar(str, wstr, 1024);
@@ -92,7 +92,7 @@ void setup_stdio() {
     _stderr.isconsole = GetConsoleMode(_stderr.fd, &mode);
 }
 
-void exit(int code) {
+void loader_exit(int code) {
     ExitProcess(code);
 }
 
@@ -120,21 +120,21 @@ int utf8_to_wchar(const char * str, wchar_t * wstr, size_t maxlen) {
     return 1;
 }
 
-size_t strlen(const char * x) {
+size_t loader_strlen(const char * x) {
     int idx = 0;
     while (x[idx] != 0)
         idx++;
     return idx;
 }
 
-size_t wcslen(const wchar_t * x) {
+size_t loader_wcslen(const wchar_t * x) {
     int idx = 0;
     while (x[idx] != 0)
         idx++;
     return idx;
 }
 
-char * strncat(char * base, const char * tail, size_t maxlen) {
+char * loader_strncat(char * base, const char * tail, size_t maxlen) {
     int base_len = strlen(base);
     int tail_len = strlen(tail);
     for (int idx=base_len; idx<min(maxlen, base_len + tail_len); ++idx) {
@@ -143,14 +143,14 @@ char * strncat(char * base, const char * tail, size_t maxlen) {
     return base;
 }
 
-void * memcpy(void * dest, const void * src, size_t len) {
+void * loader_memcpy(void * dest, const void * src, size_t len) {
     for (int idx=0; idx<len; ++idx) {
         ((char *)dest)[idx] = ((const char *)src)[idx];
     }
     return dest;
 }
 
-char * dirname(char * x) {
+char * loader_dirname(char * x) {
     int idx = strlen(x);
     while (idx > 0 && x[idx] != PATHSEPSTRING[0]) {
         idx -= 1;
@@ -170,7 +170,7 @@ char * dirname(char * x) {
     return x;
 }
 
-char * strchr(const char * haystack, int needle) {
+char * loader_strchr(const char * haystack, int needle) {
     int idx=0;
     while (haystack[idx] != needle) {
         if (haystack[idx] == 0) {
