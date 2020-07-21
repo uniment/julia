@@ -25,6 +25,7 @@
 #include <mach-o/dyld.h>
 #endif
 #ifdef _OS_FREEBSD_
+#include <stddef.h>
 #include <sys/sysctl.h>
 #endif
 #include <stdio.h>
