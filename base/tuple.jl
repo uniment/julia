@@ -113,17 +113,25 @@ function eltype(t::Type{<:Tuple{Vararg{E}}}) where {E}
     end
 end
 eltype(t::Type{<:Tuple}) = _compute_eltype(t)
-function _compute_eltype(t::Type{<:Tuple})
+function _tuple_unique_fieldtypes(@nospecialize t)
     @_pure_meta
-    @nospecialize t
-    t isa Union && return promote_typejoin(eltype(t.a), eltype(t.b))
+    types = IdSet()
     t´ = unwrap_unionall(t)
-    # TODO: handle Union/UnionAll correctly here
-    r = Union{}
-    for ti in t´.parameters
-        r = promote_typejoin(r, rewrap_unionall(unwrapva(ti), t))
+    if t isa Union
+        union!(types, _tuple_unique_fieldtypes(rewrap_unionall(t´.a, t)))
+        union!(types, _tuple_unique_fieldtypes(rewrap_unionall(t´.b, t)))
+    else
+        r = Union{}
+        for ti in (t´::DataType).parameters
+            r = push!(types, rewrap_unionall(unwrapva(ti), t))
+        end
     end
-    return r
+    return Core.svec(types...)
+end
+function _compute_eltype(@nospecialize t)
+    @_pure_meta # TODO: the compiler shouldn't need this
+    types = _tuple_unique_fieldtypes(t)
+    return afoldl(promote_typejoin, types...)
 end
 
 # version of tail that doesn't throw on empty tuples (used in array indexing)
