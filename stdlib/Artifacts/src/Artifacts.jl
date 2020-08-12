@@ -463,12 +463,26 @@ function find_artifacts_toml(path::String)
     return nothing
 end
 
-# This is a stub function that imports Pkg.Artifacts, then subs off the call to that module.
-function _ensure_artifact_installed(args...; kwargs...)
-    Core.eval(@__MODULE__, :(import Pkg))
-    return Pkg.Artifacts.ensure_artifact_installed(args...; kwargs...)
-end
+function _artifact_str(__module__, artifacts_toml, name, artifact_dict, hash)
+    if haskey(Base.module_keys, __module__)
+        # Process overrides for this UUID, if we know what it is
+        process_overrides(artifact_dict, Base.module_keys[__module__].uuid)
+    end
 
+    # If the artifact exists, we're in the happy path and we can immediately
+    # return the path to the artifact:
+    for dir in artifact_paths(hash; honor_overrides=true)
+        if isdir(dir)
+            return dir
+        end
+    end
+
+    # If not, we need to download it.  We do some trickery to import Pkg into this
+    # Artifacts module so that we only have to do this work if we're sure we need
+    # to download something.
+    Core.eval(@__MODULE__, :(import Pkg))
+    return Pkg.Artifacts.ensure_artifact_installed(name, artifacts_toml)
+end
 
 """
     macro artifact_str(name)
@@ -500,31 +514,17 @@ macro artifact_str(name)
         ))
     end
 
+    # Invalidate calling .ji file if Artifacts.toml file changes
+    Base.include_dependency(artifacts_toml)
+
     local artifact_dict = load_artifacts_toml(artifacts_toml)
     local meta = artifact_meta(name, artifact_dict, artifacts_toml)
     if meta === nothing
         error("Cannot locate artifact '$(name)' in '$(artifacts_toml)'")
     end
+    local hash = SHA1(meta["git-tree-sha1"])
     return quote
-        # Invalidate .ji file if Artifacts.toml file changes
-        Base.include_dependency($(artifacts_toml))
-
-        if haskey(Base.module_keys, $(__module__))
-            # Process overrides for this UUID, if we know what it is
-            process_overrides($(artifact_dict), Base.module_keys[$(__module__)].uuid)
-        end
-
-        # Once we have the `meta` object, if the artifact exists, we're in the happy path
-        # and we can immediately return the path to the artifact
-        local hash = SHA1($(esc(meta["git-tree-sha1"])))
-        if artifact_exists(hash)
-            artifact_path(hash)
-        else
-            # If not, we need to download it.  We do some trickery to import Pkg into this
-            # Artifacts module so that we only have to do this work if we're sure we need
-            # to download something.
-            _ensure_artifact_installed($(esc(name)), $(esc(meta)), $(artifacts_toml); platform=platform)
-        end        
+        _artifact_str($(__module__), $(artifacts_toml), $(esc(name)), $(artifact_dict), $(hash))
     end
 end
 
