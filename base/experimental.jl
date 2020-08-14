@@ -120,6 +120,34 @@ macro optlevel(n::Int)
     return Expr(:meta, :optlevel, n)
 end
 
+macro options(args...)
+    opts = Expr(:block)
+    for ex in args
+        if isa(ex, Expr) && ex.head === :(=) && length(ex.args) == 2
+            if ex.args[1] === :optimize
+                push!(opts.args, Expr(:meta, :optlevel, ex.args[2]::Int))
+            elseif ex.args[1] === :compile
+                a = ex.args[2]
+                a = #a === :no  ? 0 :
+                    #a === :yes ? 1 :
+                    #a === :all ? 2 :
+                    a === :min ? 3 : error("invalid argument to \"compile\" option")
+                push!(opts.args, Expr(:meta, :compile, a))
+            elseif ex.args[1] === :infer
+                a = ex.args[2]
+                a = a === false ? 0 :
+                    a === true  ? 1 : error("invalid argument to \"infer\" option")
+                push!(opts.args, Expr(:meta, :infer, a))
+            else
+                error("unknown option \"$(ex.args[1])\"")
+            end
+        else
+            error("invalid option syntax")
+        end
+    end
+    return opts
+end
+
 # UI features for errors
 
 """
