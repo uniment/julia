@@ -496,7 +496,7 @@ julia> replace!(x -> isodd(x) ? 2x : x, [1, 2, 3, 4])
 julia> replace!(Dict(1=>2, 3=>4)) do kv
            first(kv) < 3 ? first(kv)=>3 : kv
        end
-Dict{Int64,Int64} with 2 entries:
+Dict{Int64, Int64} with 2 entries:
   3 => 4
   1 => 3
 
@@ -586,7 +586,7 @@ julia> replace(x -> isodd(x) ? 2x : x, [1, 2, 3, 4])
 julia> replace(Dict(1=>2, 3=>4)) do kv
            first(kv) < 3 ? first(kv)=>3 : kv
        end
-Dict{Int64,Int64} with 2 entries:
+Dict{Int64, Int64} with 2 entries:
   3 => 4
   1 => 3
 ```

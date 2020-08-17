@@ -2094,7 +2094,7 @@ for all `i` and `j`.
 # Examples
 ```jldoctest
 julia> a = reshape(Vector(1:16),(2,2,2,2))
-2×2×2×2 Array{Int64,4}:
+2×2×2×2 Array{Int64, 4}:
 [:, :, 1, 1] =
  1  3
  2  4
@@ -2112,7 +2112,7 @@ julia> a = reshape(Vector(1:16),(2,2,2,2))
  14  16
 
 julia> mapslices(sum, a, dims = [1,2])
-1×1×2×2 Array{Int64,4}:
+1×1×2×2 Array{Int64, 4}:
 [:, :, 1, 1] =
  10
 
