@@ -103,6 +103,7 @@ first(t::Tuple) = t[1]
 # eltype
 
 eltype(::Type{Tuple{}}) = Bottom
+eltype(::Type{Tuple{T}}) where T = T
 function eltype(t::Type{<:Tuple{Vararg{E}}}) where {E}
     if @isdefined(E)
         return E
@@ -122,6 +123,7 @@ function _compute_eltype(t::Type{<:Tuple})
     r = Union{}
     for ti in t´.parameters
         r = promote_typejoin(r, rewrap_unionall(unwrapva(ti), t))
+        r === Any && break
     end
     return r
 end

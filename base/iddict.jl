@@ -162,6 +162,7 @@ function get!(default::Callable, d::IdDict{K,V}, @nospecialize(key)) where {K, V
         if !isa(val, V)
             val = convert(V, val)
         end
+        val::V
         setindex!(d, val, key)
         return val
     else
