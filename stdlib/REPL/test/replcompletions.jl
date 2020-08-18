@@ -96,10 +96,10 @@ function map_completion_text(completions)
     return map(completion_text, c), r, res
 end
 
-test_complete(s) = map_completion_text(completions(s,lastindex(s)))
-test_scomplete(s) =  map_completion_text(shell_completions(s,lastindex(s)))
-test_bslashcomplete(s) =  map_completion_text(bslash_completions(s,lastindex(s))[2])
-test_complete_context(s) =  map_completion_text(completions(s,lastindex(s),Main.CompletionFoo))
+test_complete(s) = map_completion_text(@inferred(completions(s,lastindex(s))))
+test_scomplete(s) =  map_completion_text(@inferred(shell_completions(s,lastindex(s))))
+test_bslashcomplete(s) =  map_completion_text(@inferred(bslash_completions(s,lastindex(s)))[2])
+test_complete_context(s) =  map_completion_text(@inferred(completions(s,lastindex(s),Main.CompletionFoo)))
 
 module M32377 end
 test_complete_32377(s) = map_completion_text(completions(s,lastindex(s), M32377))
