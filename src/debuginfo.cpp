@@ -23,8 +23,6 @@
 
 using namespace llvm;
 
-using llvm_file_magic = file_magic;
-
 #include "julia.h"
 #include "julia_internal.h"
 #include "debuginfo.h"
@@ -52,10 +50,36 @@ typedef object::SymbolRef SymRef;
 // and cannot have any interaction with the julia runtime
 static uv_rwlock_t threadsafe;
 
-extern "C" void jl_init_debuginfo()
+extern "C" void jl_init_debuginfo(void)
 {
     uv_rwlock_init(&threadsafe);
 }
+
+extern "C" void jl_lock_profile(void)
+{
+    uv_rwlock_rdlock(&threadsafe);
+}
+
+extern "C" void jl_unlock_profile(void)
+{
+    uv_rwlock_rdunlock(&threadsafe);
+}
+
+// some actions aren't signal (especially profiler) safe so we acquire a lock
+// around them to establish a mutual exclusion with unwinding from a signal
+template <typename T>
+static void jl_profile_atomic(T f)
+{
+    sigset_t sset;
+    sigset_t oset;
+    sigfillset(&sset);
+    uv_rwlock_wrlock(&threadsafe);
+    pthread_sigmask(SIG_BLOCK, &sset, &oset);
+    f();
+    pthread_sigmask(SIG_SETMASK, &oset, NULL);
+    uv_rwlock_wrunlock(&threadsafe);
+}
+
 
 // --- storing and accessing source location metadata ---
 
@@ -278,7 +302,9 @@ public:
             di->u.rti.name_ptr = 0;
             di->u.rti.table_data = arm_exidx_addr;
             di->u.rti.table_len = arm_exidx_len;
-            _U_dyn_register(di);
+            jl_profile_atomic([&]() {
+                _U_dyn_register(di);
+            });
             break;
         }
 #endif
@@ -431,14 +457,6 @@ public:
         uv_rwlock_rdlock(&threadsafe);
         return objectmap;
     }
-
-    Optional<std::map<size_t, ObjectInfo, revcomp>*> trygetObjectMap()
-    {
-        if (0 == uv_rwlock_tryrdlock(&threadsafe)) {
-            return &objectmap;
-        }
-        return {};
-    }
 };
 
 JL_DLLEXPORT void ORCNotifyObjectEmitted(JITEventListener *Listener,
@@ -482,7 +500,7 @@ done:
 }
 
 static JuliaJITEventListener *jl_jit_events;
-JITEventListener *CreateJuliaJITEventListener()
+JITEventListener *CreateJuliaJITEventListener(void)
 {
     jl_jit_events = new JuliaJITEventListener();
     return jl_jit_events;
@@ -722,7 +740,7 @@ openDebugInfo(StringRef debuginfopath, const debug_link_info &info)
 
     auto error_splitobj = object::ObjectFile::createObjectFile(
             SplitFile.get().get()->getMemBufferRef(),
-            llvm_file_magic::unknown);
+            file_magic::unknown);
     if (!error_splitobj) {
         return error_splitobj.takeError();
     }
@@ -873,7 +891,7 @@ static objfileentry_t &find_object_file(uint64_t fbase, StringRef fname) JL_NOTS
         std::unique_ptr<MemoryBuffer> membuf = MemoryBuffer::getMemBuffer(
                 StringRef((const char *)fbase, msize), "", false);
         auto origerrorobj = llvm::object::ObjectFile::createObjectFile(
-            membuf->getMemBufferRef(), llvm_file_magic::unknown);
+            membuf->getMemBufferRef(), file_magic::unknown);
         if (!origerrorobj)
             return entry;
 
@@ -1292,11 +1310,13 @@ void register_eh_frames(uint8_t *Addr, size_t Size)
   // See http://lists.cs.uiuc.edu/pipermail/llvmdev/2013-April/061768.html
   processFDEs((char*)Addr, Size, [](const char *Entry) {
         if (!libc_register_frame) {
-          libc_register_frame = (void(*)(void*))dlsym(RTLD_NEXT,"__register_frame");
+          libc_register_frame = (void(*)(void*))dlsym(RTLD_NEXT, "__register_frame");
         }
         assert(libc_register_frame);
-        libc_register_frame(const_cast<char *>(Entry));
-        __register_frame(const_cast<char *>(Entry));
+        jl_profile_atomic([&]() {
+            libc_register_frame(const_cast<char *>(Entry));
+            __register_frame(const_cast<char *>(Entry));
+        });
     });
 }
 
@@ -1304,16 +1324,19 @@ void deregister_eh_frames(uint8_t *Addr, size_t Size)
 {
    processFDEs((char*)Addr, Size, [](const char *Entry) {
         if (!libc_deregister_frame) {
-          libc_deregister_frame = (void(*)(void*))dlsym(RTLD_NEXT,"__deregister_frame");
+          libc_deregister_frame = (void(*)(void*))dlsym(RTLD_NEXT, "__deregister_frame");
         }
         assert(libc_deregister_frame);
-        libc_deregister_frame(const_cast<char *>(Entry));
-        __deregister_frame(const_cast<char *>(Entry));
+        jl_profile_atomic([&]() {
+            libc_deregister_frame(const_cast<char *>(Entry));
+            __deregister_frame(const_cast<char *>(Entry));
+        });
     });
 }
 
 #elif defined(_OS_LINUX_) && \
-    defined(JL_UNW_HAS_FORMAT_IP) && !defined(_CPU_ARM_)
+    defined(JL_UNW_HAS_FORMAT_IP) && \
+    !defined(_CPU_ARM_) // ARM does not have/use .eh_frame, so we handle this elsewhere
 #include <type_traits>
 
 struct unw_table_entry
@@ -1499,7 +1522,9 @@ static DW_EH_PE parseCIE(const uint8_t *Addr, const uint8_t *End)
 void register_eh_frames(uint8_t *Addr, size_t Size)
 {
     // System unwinder
-    __register_frame(Addr);
+    jl_profile_atomic([&]() {
+        __register_frame(Addr);
+    });
     // Our unwinder
     unw_dyn_info_t *di = new unw_dyn_info_t;
     // In a shared library, this is set to the address of the PLT.
@@ -1610,7 +1635,7 @@ void register_eh_frames(uint8_t *Addr, size_t Size)
             start_ips[cur_entry] = start;
             cur_entry++;
         });
-    for (size_t i = 0;i < nentries;i++) {
+    for (size_t i = 0; i < nentries; i++) {
         table[i].start_ip_offset =
             safe_trunc<int32_t>((intptr_t)start_ips[i] - (intptr_t)start_ip);
     }
@@ -1621,25 +1646,19 @@ void register_eh_frames(uint8_t *Addr, size_t Size)
     di->start_ip = start_ip;
     di->end_ip = end_ip;
 
-    _U_dyn_register(di);
+    jl_profile_atomic([&]() {
+        _U_dyn_register(di);
+    });
 }
 
 void deregister_eh_frames(uint8_t *Addr, size_t Size)
 {
-    __deregister_frame(Addr);
-    // Deregistering with our unwinder requires a lookup table to find the
-    // the allocated entry above (or we could look in libunwind's internal
+    jl_profile_atomic([&]() {
+        __deregister_frame(Addr);
+    });
+    // Deregistering with our unwinder (_U_dyn_cancel) requires a lookup table
+    // to find the allocated entry above (or looking into libunwind's internal
     // data structures).
-}
-
-#elif defined(_CPU_ARM_)
-
-void register_eh_frames(uint8_t *Addr, size_t Size)
-{
-}
-
-void deregister_eh_frames(uint8_t *Addr, size_t Size)
-{
 }
 
 #else
@@ -1667,22 +1686,3 @@ uint64_t jl_getUnwindInfo(uint64_t dwAddr)
     uv_rwlock_rdunlock(&threadsafe);
     return ipstart;
 }
-
-extern "C"
-uint64_t jl_trygetUnwindInfo(uint64_t dwAddr)
-{
-    // Might be called from unmanaged thread
-    Optional<std::map<size_t, ObjectInfo, revcomp>*> maybeobjmap = jl_jit_events->trygetObjectMap();
-    if (maybeobjmap) {
-        std::map<size_t, ObjectInfo, revcomp> &objmap = **maybeobjmap;
-        std::map<size_t, ObjectInfo, revcomp>::iterator it = objmap.lower_bound(dwAddr);
-        uint64_t ipstart = 0; // ip of the start of the section (if found)
-        if (it != objmap.end() && dwAddr < it->first + it->second.SectionSize) {
-            ipstart = (uint64_t)(uintptr_t)(*it).first;
-        }
-        uv_rwlock_rdunlock(&threadsafe);
-        return ipstart;
-    }
-    return 0;
-}
-
