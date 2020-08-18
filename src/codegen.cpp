@@ -2275,7 +2275,7 @@ static jl_cgval_t emit_globalref(jl_codectx_t &ctx, jl_module_t *mod, jl_sym_t *
         if (bnd->constp) {
             return mark_julia_const(bnd->value);
         }
-        LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, sizeof(void*));
+        LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, Align(sizeof(void*)));
         v->setOrdering(AtomicOrdering::Unordered);
         tbaa_decorate(tbaa_binding, v);
         return mark_julia_type(ctx, v, true, (jl_value_t*)jl_any_type);
@@ -2456,11 +2456,11 @@ static Value *emit_bits_compare(jl_codectx_t &ctx, jl_cgval_t arg1, jl_cgval_t a
                     fld2 = ctx.builder.CreateExtractValue(varg2, llvm_idx);
                 if (jl_field_isptr(sty, i)) {
                     if (arg1.ispointer()) {
-                        fld1 = ctx.builder.CreateAlignedLoad(T_prjlvalue, fld1, sizeof(void*));
+                        fld1 = ctx.builder.CreateAlignedLoad(T_prjlvalue, fld1, Align(sizeof(void*)));
                         cast<LoadInst>(fld1)->setOrdering(AtomicOrdering::Unordered);
                     }
                     if (arg2.ispointer()) {
-                        fld2 = ctx.builder.CreateAlignedLoad(T_prjlvalue, fld2, sizeof(void*));
+                        fld2 = ctx.builder.CreateAlignedLoad(T_prjlvalue, fld2, Align(sizeof(void*)));
                         cast<LoadInst>(fld2)->setOrdering(AtomicOrdering::Unordered);
                     }
                     subAns = emit_box_compare(ctx,
@@ -2473,7 +2473,7 @@ static Value *emit_bits_compare(jl_codectx_t &ctx, jl_cgval_t arg1, jl_cgval_t a
                     jl_cgval_t fld2_info;
                     if (arg1.ispointer()) {
                         Value *tindex1 = ctx.builder.CreateNUWAdd(ConstantInt::get(T_int8, 1),
-                                ctx.builder.CreateAlignedLoad(T_int8, emit_struct_gep(ctx, at, varg1, tindex_offset), 1));
+                                ctx.builder.CreateAlignedLoad(T_int8, emit_struct_gep(ctx, at, varg1, tindex_offset), Align(1)));
                         fld1_info = mark_julia_slot(fld1, fldty, tindex1, arg1.tbaa);
                     }
                     else {
@@ -2481,7 +2481,7 @@ static Value *emit_bits_compare(jl_codectx_t &ctx, jl_cgval_t arg1, jl_cgval_t a
                     }
                     if (arg2.ispointer()) {
                         Value *tindex2 = ctx.builder.CreateNUWAdd(ConstantInt::get(T_int8, 1),
-                                ctx.builder.CreateAlignedLoad(T_int8, emit_struct_gep(ctx, at, varg2, tindex_offset), 1));
+                                ctx.builder.CreateAlignedLoad(T_int8, emit_struct_gep(ctx, at, varg2, tindex_offset), Align(1)));
                         fld2_info = mark_julia_slot(fld2, fldty, tindex2, arg2.tbaa);
                     }
                     else {
@@ -2759,7 +2759,7 @@ static bool emit_builtin_call(jl_codectx_t &ctx, jl_cgval_t *ret, jl_value_t *f,
                     ptindex = emit_bitcast(ctx, ptindex, T_pint8);
                     ptindex = ctx.builder.CreateInBoundsGEP(T_int8, ptindex, offset);
                     ptindex = ctx.builder.CreateInBoundsGEP(T_int8, ptindex, idx);
-                    Instruction *tindex = tbaa_decorate(tbaa_arrayselbyte, ctx.builder.CreateAlignedLoad(T_int8, ptindex, 1));
+                    Instruction *tindex = tbaa_decorate(tbaa_arrayselbyte, ctx.builder.CreateAlignedLoad(T_int8, ptindex, Align(1)));
                     tindex->setMetadata(LLVMContext::MD_range, MDNode::get(jl_LLVMContext, {
                         ConstantAsMetadata::get(ConstantInt::get(T_int8, 0)),
                         ConstantAsMetadata::get(ConstantInt::get(T_int8, union_max)) }));
@@ -2829,7 +2829,7 @@ static bool emit_builtin_call(jl_codectx_t &ctx, jl_cgval_t *ret, jl_value_t *f,
                                         ctx.builder.CreateConstInBoundsGEP1_32(T_prjlvalue,
                                             emit_bitcast(ctx, decay_derived(ctx, aryv), T_pprjlvalue),
                                             jl_array_data_owner_offset(nd) / sizeof(jl_value_t*)),
-                                        sizeof(void*));
+                                        Align(sizeof(void*)));
                                 tbaa_decorate(tbaa_const, maybe_mark_load_dereferenceable(own_ptr, false, (jl_value_t*)jl_array_any_type));
                             }
                             else {
@@ -2906,7 +2906,7 @@ static bool emit_builtin_call(jl_codectx_t &ctx, jl_cgval_t *ret, jl_value_t *f,
                         jl_value_t *boundscheck = (nargs == 3 ? argv[3].constant : jl_true);
                         idx = emit_bounds_check(ctx, va_ary, NULL, idx, valen, boundscheck);
                         idx = ctx.builder.CreateAdd(idx, ConstantInt::get(T_size, ctx.nReqArgs));
-                        Instruction *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, ctx.builder.CreateInBoundsGEP(ctx.argArray, idx), sizeof(void*));
+                        Instruction *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, ctx.builder.CreateInBoundsGEP(ctx.argArray, idx), Align(sizeof(void*)));
                         // if we know the result type of this load, we will mark that information here too
                         tbaa_decorate(tbaa_value, maybe_mark_load_dereferenceable(v, false, rt));
                         *ret = mark_julia_type(ctx, v, /*boxed*/ true, rt);
@@ -3043,7 +3043,7 @@ static bool emit_builtin_call(jl_codectx_t &ctx, jl_cgval_t *ret, jl_value_t *f,
                 jl_value_t *boundscheck = (nargs == 3 ? argv[3].constant : jl_true);
                 emit_bounds_check(ctx, typ, (jl_value_t*)jl_datatype_type, idx, types_len, boundscheck);
                 Value *fieldtyp_p = ctx.builder.CreateInBoundsGEP(T_prjlvalue, decay_derived(ctx, emit_bitcast(ctx, types_svec, T_pprjlvalue)), idx);
-                Value *fieldtyp = tbaa_decorate(tbaa_const, ctx.builder.CreateAlignedLoad(T_prjlvalue, fieldtyp_p, sizeof(void*)));
+                Value *fieldtyp = tbaa_decorate(tbaa_const, ctx.builder.CreateAlignedLoad(T_prjlvalue, fieldtyp_p, Align(sizeof(void*))));
                 *ret = mark_julia_type(ctx, fieldtyp, true, (jl_value_t*)jl_type_type);
                 return true;
             }
@@ -3057,7 +3057,7 @@ static bool emit_builtin_call(jl_codectx_t &ctx, jl_cgval_t *ret, jl_value_t *f,
         if (sty == jl_string_type || sty == jl_simplevector_type) {
             // String and SimpleVector's length fields have the same layout
             auto ptr = emit_bitcast(ctx, boxed(ctx, obj), T_psize);
-            Value *len = tbaa_decorate(tbaa_mutab, ctx.builder.CreateAlignedLoad(T_size, ptr, sizeof(size_t)));
+            Value *len = tbaa_decorate(tbaa_mutab, ctx.builder.CreateAlignedLoad(T_size, ptr, Align(sizeof(size_t))));
             if (sty == jl_simplevector_type) {
                 len = ctx.builder.CreateMul(len, ConstantInt::get(T_size, sizeof(void*)));
                 len = ctx.builder.CreateAdd(len, ConstantInt::get(T_size, sizeof(void*)));
@@ -3151,7 +3151,7 @@ static bool emit_builtin_call(jl_codectx_t &ctx, jl_cgval_t *ret, jl_value_t *f,
                 Value *addr = ctx.builder.CreateConstInBoundsGEP1_32(T_prjlvalue, ptr, offs);
                 // emit this using the same type as emit_getfield_knownidx
                 // so that LLVM may be able to load-load forward them and fold the result
-                fldv = tbaa_decorate(obj.tbaa, ctx.builder.CreateAlignedLoad(T_prjlvalue, addr, sizeof(size_t)));
+                fldv = tbaa_decorate(obj.tbaa, ctx.builder.CreateAlignedLoad(T_prjlvalue, addr, Align(sizeof(size_t))));
                 cast<LoadInst>(fldv)->setOrdering(AtomicOrdering::Unordered);
             }
             else {
@@ -3511,7 +3511,7 @@ static Value *global_binding_pointer(jl_codectx_t &ctx, jl_module_t *m, jl_sym_t
             Constant *initnul = V_null;
             GlobalVariable *bindinggv = new GlobalVariable(*ctx.f->getParent(), T_pjlvalue,
                     false, GlobalVariable::PrivateLinkage, initnul);
-            LoadInst *cachedval = ctx.builder.CreateAlignedLoad(T_pjlvalue, bindinggv, sizeof(void*));
+            LoadInst *cachedval = ctx.builder.CreateAlignedLoad(T_pjlvalue, bindinggv, Align(sizeof(void*)));
             cachedval->setOrdering(AtomicOrdering::Unordered);
             BasicBlock *have_val = BasicBlock::Create(jl_LLVMContext, "found");
             BasicBlock *not_found = BasicBlock::Create(jl_LLVMContext, "notfound");
@@ -3522,7 +3522,7 @@ static Value *global_binding_pointer(jl_codectx_t &ctx, jl_module_t *m, jl_sym_t
             Value *bval = ctx.builder.CreateCall(prepare_call(jlgetbindingorerror_func),
                     { literal_pointer_val(ctx, (jl_value_t*)m),
                       literal_pointer_val(ctx, (jl_value_t*)s) });
-            ctx.builder.CreateAlignedStore(bval, bindinggv, sizeof(void*))->setOrdering(AtomicOrdering::Release);
+            ctx.builder.CreateAlignedStore(bval, bindinggv, Align(sizeof(void*)))->setOrdering(AtomicOrdering::Release);
             ctx.builder.CreateBr(have_val);
             ctx.f->getBasicBlockList().push_back(have_val);
             ctx.builder.SetInsertPoint(have_val);
@@ -3541,7 +3541,7 @@ static Value *global_binding_pointer(jl_codectx_t &ctx, jl_module_t *m, jl_sym_t
 
 static jl_cgval_t emit_checked_var(jl_codectx_t &ctx, Value *bp, jl_sym_t *name, bool isvol, MDNode *tbaa)
 {
-    LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, sizeof(void*));
+    LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, Align(sizeof(void*)));
     if (isvol)
         v->setVolatile(true);
     v->setOrdering(AtomicOrdering::Unordered);
@@ -3564,7 +3564,7 @@ static jl_cgval_t emit_sparam(jl_codectx_t &ctx, size_t i)
             T_prjlvalue,
             ctx.spvals_ptr,
             i + sizeof(jl_svec_t) / sizeof(jl_value_t*));
-    Value *sp = tbaa_decorate(tbaa_const, ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, sizeof(void*)));
+    Value *sp = tbaa_decorate(tbaa_const, ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, Align(sizeof(void*))));
     Value *isnull = ctx.builder.CreateICmpNE(emit_typeof(ctx, sp),
             track_pjlvalue(ctx, literal_pointer_val(ctx, (jl_value_t*)jl_tvar_type)));
     jl_unionall_t *sparam = (jl_unionall_t*)ctx.linfo->def.method->sig;
@@ -3587,7 +3587,7 @@ static jl_cgval_t emit_global(jl_codectx_t &ctx, jl_sym_t *sym)
         // double-check that a global variable is actually defined. this
         // can be a problem in parallel when a definition is missing on
         // one machine.
-        LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, sizeof(void*));
+        LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, Align(sizeof(void*)));
         v->setOrdering(AtomicOrdering::Unordered);
         tbaa_decorate(tbaa_binding, v);
         return mark_julia_type(ctx, v, true, jl_any_type);
@@ -3605,15 +3605,15 @@ static jl_cgval_t emit_isdefined(jl_codectx_t &ctx, jl_value_t *sym)
             return mark_julia_const(jl_true);
         if (vi.boxroot == NULL || vi.pTIndex != NULL) {
             assert(vi.defFlag);
-            isnull = ctx.builder.CreateAlignedLoad(T_int1, vi.defFlag, 1, vi.isVolatile);
+            isnull = ctx.builder.CreateAlignedLoad(T_int1, vi.defFlag, Align(1), vi.isVolatile);
         }
         if (vi.boxroot != NULL) {
-            Value *boxed = ctx.builder.CreateAlignedLoad(T_prjlvalue, vi.boxroot, sizeof(void*), vi.isVolatile);
+            Value *boxed = ctx.builder.CreateAlignedLoad(T_prjlvalue, vi.boxroot, Align(sizeof(void*)), vi.isVolatile);
             Value *box_isnull = ctx.builder.CreateICmpNE(boxed, V_rnull);
             if (vi.pTIndex) {
                 // value is either boxed in the stack slot, or unboxed in value
                 // as indicated by testing (pTIndex & 0x80)
-                Value *tindex = ctx.builder.CreateAlignedLoad(T_int8, vi.pTIndex, sizeof(void*), vi.isVolatile);
+                Value *tindex = ctx.builder.CreateAlignedLoad(T_int8, vi.pTIndex, Align(sizeof(void*)), vi.isVolatile);
                 Value *load_unbox = ctx.builder.CreateICmpEQ(
                             ctx.builder.CreateAnd(tindex, ConstantInt::get(T_int8, 0x80)),
                             ConstantInt::get(T_int8, 0));
@@ -3638,7 +3638,7 @@ static jl_cgval_t emit_isdefined(jl_codectx_t &ctx, jl_value_t *sym)
                 T_prjlvalue,
                 ctx.spvals_ptr,
                 i + sizeof(jl_svec_t) / sizeof(jl_value_t*));
-        Value *sp = tbaa_decorate(tbaa_const, ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, sizeof(void*)));
+        Value *sp = tbaa_decorate(tbaa_const, ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, Align(sizeof(void*))));
         isnull = ctx.builder.CreateICmpNE(emit_typeof(ctx, sp),
             track_pjlvalue(ctx, literal_pointer_val(ctx, (jl_value_t*)jl_tvar_type)));
     }
@@ -3659,7 +3659,7 @@ static jl_cgval_t emit_isdefined(jl_codectx_t &ctx, jl_value_t *sym)
             if (bnd->value != NULL)
                 return mark_julia_const(jl_true);
             Value *bp = julia_binding_gv(ctx, bnd);
-            LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, sizeof(void*));
+            LoadInst *v = ctx.builder.CreateAlignedLoad(T_prjlvalue, bp, Align(sizeof(void*)));
             tbaa_decorate(tbaa_binding, v);
             v->setOrdering(AtomicOrdering::Unordered);
             isnull = ctx.builder.CreateICmpNE(v, V_rnull);
@@ -3683,7 +3683,7 @@ static jl_cgval_t emit_varinfo(jl_codectx_t &ctx, jl_varinfo_t &vi, jl_sym_t *va
         if ((!vi.isVolatile && vi.isSA) || vi.isArgument || vi.value.constant || !vi.value.V) {
             v = vi.value;
             if (vi.pTIndex)
-                v.TIndex = ctx.builder.CreateAlignedLoad(T_int8, vi.pTIndex, 1);
+                v.TIndex = ctx.builder.CreateAlignedLoad(T_int8, vi.pTIndex, Align(1));
         }
         else {
             // copy value to a non-mutable (non-volatile SSA) location
@@ -3693,28 +3693,46 @@ static jl_cgval_t emit_varinfo(jl_codectx_t &ctx, jl_varinfo_t &vi, jl_sym_t *va
             AllocaInst *ssaslot = cast<AllocaInst>(varslot->clone());
             ssaslot->insertAfter(varslot);
             if (vi.isVolatile) {
-                Value *unbox = ctx.builder.CreateAlignedLoad(ssaslot->getAllocatedType(), varslot, varslot->getAlignment(), true);
-                ctx.builder.CreateAlignedStore(unbox, ssaslot, ssaslot->getAlignment());
+                Value *unbox = ctx.builder.CreateAlignedLoad(ssaslot->getAllocatedType(), varslot,
+#if JL_LLVM_VERSION >= 100000
+                        varslot->getAlign(),
+#else
+                        varslot->getAlignment(),
+#endif
+                        true);
+                ctx.builder.CreateAlignedStore(unbox, ssaslot,
+#if JL_LLVM_VERSION >= 100000
+                        ssaslot->getAlign()
+#else
+                        ssaslot->getAlignment()
+#endif
+                        );
             }
             else {
                 const DataLayout &DL = jl_data_layout;
                 uint64_t sz = DL.getTypeStoreSize(T);
-                emit_memcpy(ctx, ssaslot, tbaa_stack, vi.value, sz, ssaslot->getAlignment());
+                emit_memcpy(ctx, ssaslot, tbaa_stack, vi.value, sz,
+#if JL_LLVM_VERSION >= 100000
+                        ssaslot->getAlign().value()
+#else
+                        ssaslot->getAlignment()
+#endif
+                        );
             }
             Value *tindex = NULL;
             if (vi.pTIndex)
-                tindex = ctx.builder.CreateAlignedLoad(T_int8, vi.pTIndex, 1, vi.isVolatile);
+                tindex = ctx.builder.CreateAlignedLoad(T_int8, vi.pTIndex, Align(1), vi.isVolatile);
             v = mark_julia_slot(ssaslot, vi.value.typ, tindex, tbaa_stack);
         }
         if (vi.boxroot == NULL)
             v = update_julia_type(ctx, v, typ);
         if (vi.usedUndef) {
             assert(vi.defFlag);
-            isnull = ctx.builder.CreateAlignedLoad(T_int1, vi.defFlag, 1, vi.isVolatile);
+            isnull = ctx.builder.CreateAlignedLoad(T_int1, vi.defFlag, Align(1), vi.isVolatile);
         }
     }
     if (vi.boxroot != NULL) {
-        Instruction *boxed = ctx.builder.CreateAlignedLoad(T_prjlvalue, vi.boxroot, sizeof(void*), vi.isVolatile);
+        Instruction *boxed = ctx.builder.CreateAlignedLoad(T_prjlvalue, vi.boxroot, Align(sizeof(void*)), vi.isVolatile);
         Value *box_isnull = NULL;
         if (vi.usedUndef)
             box_isnull = ctx.builder.CreateICmpNE(boxed, V_rnull);
@@ -4123,9 +4141,9 @@ static void emit_stmtpos(jl_codectx_t &ctx, jl_value_t *expr, int ssaval_result)
     else {
         if (!jl_is_method(ctx.linfo->def.method)) {
             // TODO: inference is invalid if this has any effect (which it often does)
-            Value *world = ctx.builder.CreateAlignedLoad(prepare_global_in(jl_Module, jlgetworld_global), sizeof(size_t));
+            Value *world = ctx.builder.CreateAlignedLoad(prepare_global_in(jl_Module, jlgetworld_global), Align(sizeof(size_t)));
             // TODO: world->setOrdering(AtomicOrdering::Monotonic);
-            ctx.builder.CreateAlignedStore(world, ctx.world_age_field, sizeof(size_t));
+            ctx.builder.CreateAlignedStore(world, ctx.world_age_field, Align(sizeof(size_t)));
         }
         assert(ssaval_result != -1);
         emit_ssaval_assign(ctx, ssaval_result, expr);
@@ -4578,7 +4596,7 @@ static void emit_cfunc_invalidate(
         }
         else {
             gf_ret = emit_bitcast(ctx, gf_ret, gfrt->getPointerTo());
-            ctx.builder.CreateRet(ctx.builder.CreateAlignedLoad(gf_ret, julia_alignment(rettype)));
+            ctx.builder.CreateRet(ctx.builder.CreateAlignedLoad(gf_ret, Align(julia_alignment(rettype))));
         }
         break;
     }
@@ -4705,11 +4723,11 @@ static Function* gen_cfun_wrapper(
     // TODO: in the future, try to initialize a full TLS context here
     // for now, just use a dummy field to avoid a branch in this function
     ctx.world_age_field = ctx.builder.CreateSelect(have_tls, ctx.world_age_field, dummy_world);
-    Value *last_age = tbaa_decorate(tbaa_gcframe, ctx.builder.CreateAlignedLoad(ctx.world_age_field, sizeof(size_t)));
+    Value *last_age = tbaa_decorate(tbaa_gcframe, ctx.builder.CreateAlignedLoad(ctx.world_age_field, Align(sizeof(size_t))));
     Value *valid_tls = ctx.builder.CreateIsNotNull(last_age);
     have_tls = ctx.builder.CreateAnd(have_tls, valid_tls);
     ctx.world_age_field = ctx.builder.CreateSelect(valid_tls, ctx.world_age_field, dummy_world);
-    Value *world_v = ctx.builder.CreateAlignedLoad(prepare_global_in(jl_Module, jlgetworld_global), sizeof(size_t));
+    Value *world_v = ctx.builder.CreateAlignedLoad(prepare_global_in(jl_Module, jlgetworld_global), Align(sizeof(size_t)));
     // TODO: cast<LoadInst>(world_v)->setOrdering(AtomicOrdering::Monotonic);
 
     Value *age_ok = NULL;
@@ -4720,7 +4738,7 @@ static Function* gen_cfun_wrapper(
                     T_size,
                     emit_bitcast(ctx, literal_pointer_val(ctx, (jl_value_t*)codeinst), T_psize),
                     offsetof(jl_code_instance_t, max_world) / sizeof(size_t)),
-                sizeof(size_t));
+                Align(sizeof(size_t)));
         // XXX: age is always OK if we don't have a TLS. This is a hack required due to `@threadcall` abuse.
         // and adds quite a bit of complexity here, even though it's still wrong
         // (anything that tries to interact with the runtime will fault)
@@ -4741,7 +4759,7 @@ static Function* gen_cfun_wrapper(
     }
     else {
         assert(nest && nestPtr);
-        Value *ff = ctx.builder.CreateAlignedLoad(T_prjlvalue, nestPtr, sizeof(void*));
+        Value *ff = ctx.builder.CreateAlignedLoad(T_prjlvalue, nestPtr, Align(sizeof(void*)));
         inputargs[0] = mark_julia_type(ctx, ff, true, jl_any_type);
     }
     // XXX: these values may need to be rooted until the end of the function
@@ -4777,7 +4795,7 @@ static Function* gen_cfun_wrapper(
         if (aref) {
             if (jargty == (jl_value_t*)jl_any_type) {
                 inputarg = mark_julia_type(ctx,
-                        ctx.builder.CreateAlignedLoad(T_prjlvalue, emit_bitcast(ctx, val, T_pprjlvalue), sizeof(void*)),
+                        ctx.builder.CreateAlignedLoad(T_prjlvalue, emit_bitcast(ctx, val, T_pprjlvalue), Align(sizeof(void*))),
                         true, jl_any_type);
             }
             else if (static_at && jl_is_concrete_immutable(jargty)) { // anything that could be stored unboxed
@@ -4790,7 +4808,7 @@ static Function* gen_cfun_wrapper(
                 }
                 else {
                     val = emit_bitcast(ctx, val, T->getPointerTo());
-                    val = ctx.builder.CreateAlignedLoad(val, 1); // make no alignment assumption about pointer from C
+                    val = ctx.builder.CreateAlignedLoad(val, Align(1)); // make no alignment assumption about pointer from C
                     inputarg = mark_julia_type(ctx, val, false, jargty);
                 }
             }
@@ -4807,7 +4825,7 @@ static Function* gen_cfun_wrapper(
                 jl_array_ptr_1d_push(*closure_types, jargty);
                 Value *runtime_dt = ctx.builder.CreateAlignedLoad(T_prjlvalue,
                         ctx.builder.CreateConstInBoundsGEP1_32(T_prjlvalue, nestPtr, jl_array_len(*closure_types)),
-                        sizeof(void*));
+                        Align(sizeof(void*)));
                 BasicBlock *boxedBB = BasicBlock::Create(jl_LLVMContext, "isboxed", cw);
                 BasicBlock *loadBB = BasicBlock::Create(jl_LLVMContext, "need-load", cw);
                 BasicBlock *unboxedBB = BasicBlock::Create(jl_LLVMContext, "maybe-unboxed", cw);
@@ -4825,7 +4843,7 @@ static Function* gen_cfun_wrapper(
                         ctx.builder.CreateBitCast(val, T_pjlvalue));
                 ctx.builder.CreateCondBr(isrtany, isanyBB, unboxedBB);
                 ctx.builder.SetInsertPoint(isanyBB);
-                Value *p2 = ctx.builder.CreateAlignedLoad(T_prjlvalue, ctx.builder.CreateBitCast(val, T_pprjlvalue), sizeof(void*));
+                Value *p2 = ctx.builder.CreateAlignedLoad(T_prjlvalue, ctx.builder.CreateBitCast(val, T_pprjlvalue), Align(sizeof(void*)));
                 ctx.builder.CreateBr(afterBB);
                 ctx.builder.SetInsertPoint(unboxedBB);
                 Value *p3 = emit_new_bits(ctx, runtime_dt, val);
@@ -4851,7 +4869,7 @@ static Function* gen_cfun_wrapper(
                 assert(jl_is_datatype(jargty));
                 if (sig.byRefList.at(i)) {
                     assert(cast<PointerType>(val->getType())->getElementType() == sig.fargt[i]);
-                    val = ctx.builder.CreateAlignedLoad(val, 1); // unknown alignment from C
+                    val = ctx.builder.CreateAlignedLoad(val, Align(1)); // unknown alignment from C
                 }
                 else {
                     bool issigned = jl_signed_type && jl_subtype(jargty_proper, (jl_value_t*)jl_signed_type);
@@ -4875,7 +4893,7 @@ static Function* gen_cfun_wrapper(
                     jl_array_ptr_1d_push(*closure_types, jargty);
                     Value *runtime_dt = ctx.builder.CreateAlignedLoad(T_prjlvalue,
                             ctx.builder.CreateConstInBoundsGEP1_32(T_prjlvalue, nestPtr, jl_array_len(*closure_types)),
-                            sizeof(void*));
+                            Align(sizeof(void*)));
                     Value *strct = box_ccall_result(ctx, val, runtime_dt, jargty);
                     inputarg = mark_julia_type(ctx, strct, true, jargty_proper);
                 }
@@ -5401,14 +5419,14 @@ static Function *gen_invoke_wrapper(jl_method_instance_t *lam, jl_value_t *jlret
         else {
             Value *argPtr = ctx.builder.CreateConstInBoundsGEP1_32(T_prjlvalue, argArray, i - 1);
             theArg = maybe_mark_load_dereferenceable(
-                    ctx.builder.CreateAlignedLoad(T_prjlvalue, argPtr, sizeof(void*)),
+                    ctx.builder.CreateAlignedLoad(T_prjlvalue, argPtr, Align(sizeof(void*))),
                     false,
                     ty);
         }
         if (!isboxed) {
             theArg = decay_derived(ctx, emit_bitcast(ctx, theArg, PointerType::get(lty, 0)));
             if (!lty->isAggregateType()) // keep "aggregate" type values in place as pointers
-                theArg = ctx.builder.CreateAlignedLoad(theArg, julia_alignment(ty));
+                theArg = ctx.builder.CreateAlignedLoad(theArg, Align(julia_alignment(ty)));
         }
         assert(dyn_cast<UndefValue>(theArg) == NULL);
         args[idx] = theArg;
@@ -5425,7 +5443,7 @@ static Function *gen_invoke_wrapper(jl_method_instance_t *lam, jl_value_t *jlret
         else
             theArg = ctx.builder.CreateAlignedLoad(T_prjlvalue,
                     ctx.builder.CreateConstInBoundsGEP1_32(T_prjlvalue, argArray, retarg - 1),
-                    sizeof(void*));
+                    Align(sizeof(void*)));
         retval = mark_julia_type(ctx, theArg, true, jl_any_type);
     }
     else {
@@ -5982,7 +6000,7 @@ static std::pair<std::unique_ptr<Module>, jl_llvm_functions_t>
     Value *last_age = NULL;
     if (toplevel) {
         emit_last_age_field(ctx);
-        last_age = tbaa_decorate(tbaa_gcframe, ctx.builder.CreateAlignedLoad(ctx.world_age_field, sizeof(size_t)));
+        last_age = tbaa_decorate(tbaa_gcframe, ctx.builder.CreateAlignedLoad(ctx.world_age_field, Align(sizeof(size_t))));
     }
 
     // step 8. allocate local variables slots
@@ -6047,7 +6065,8 @@ static std::pair<std::unique_ptr<Module>, jl_llvm_functions_t>
                 jl_symbol_name(s), /*InsertBefore*/ctx.ptlsStates);
             StoreInst *SI = new StoreInst(
                 ConstantPointerNull::get(cast<PointerType>(T_prjlvalue)), av,
-                false);
+                false,
+                Align(sizeof(void*)));
             SI->insertAfter(ctx.ptlsStates);
             varinfo.boxroot = av;
             if (ctx.debug_enabled && varinfo.dinfo) {
@@ -6165,7 +6184,7 @@ static std::pair<std::unique_ptr<Module>, jl_llvm_functions_t>
                 else {
                     Value *argPtr = ctx.builder.CreateInBoundsGEP(T_prjlvalue, argArray, ConstantInt::get(T_size, i-1));
                     Value *load = maybe_mark_load_dereferenceable(
-                            ctx.builder.CreateAlignedLoad(T_prjlvalue, argPtr, sizeof(void*)),
+                            ctx.builder.CreateAlignedLoad(T_prjlvalue, argPtr, Align(sizeof(void*))),
                             false, vi.value.typ);
                     theArg = mark_julia_type(ctx, load, true, vi.value.typ);
                     if (ctx.debug_enabled && vi.dinfo && !vi.boxroot && !vi.value.V) {
@@ -6616,7 +6635,7 @@ static std::pair<std::unique_ptr<Module>, jl_llvm_functions_t>
                     }
                     if (dest_ty != sret->getType())
                         sret = emit_bitcast(ctx, sret, dest_ty);
-                    ctx.builder.CreateAlignedStore(Val, sret, julia_alignment(retvalinfo.typ));
+                    ctx.builder.CreateAlignedStore(Val, sret, Align(julia_alignment(retvalinfo.typ)));
                     assert(retvalinfo.TIndex == NULL && "unreachable"); // unimplemented representation
                 }
             }
